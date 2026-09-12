@@ -23,6 +23,7 @@ namespace MaddsPet.Easteregg
         private readonly System.Windows.Forms.Timer lifeTimer;
         private readonly Random rng = new();
 
+
         private static readonly Image[] CatImages =
         {
             CleanEdgesFast(Resources.blackcat),
@@ -45,9 +46,9 @@ namespace MaddsPet.Easteregg
                
             };
             typeof(Form).GetProperty("DoubleBuffered",
-           System.Reflection.BindingFlags.NonPublic |
-          System.Reflection.BindingFlags.Instance)
-          ?.SetValue(overlay, true);
+            System.Reflection.BindingFlags.NonPublic |
+            System.Reflection.BindingFlags.Instance)
+            ?.SetValue(overlay, true);
             overlay.Paint += Overlay_Paint;
 
             for (int i = 0; i < CatCount; i++)
