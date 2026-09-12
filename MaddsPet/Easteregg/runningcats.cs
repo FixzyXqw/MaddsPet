@@ -1,8 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Linq;
 using System.Windows.Forms;
 using MaddsPet.Properties;
 
@@ -16,17 +15,19 @@ namespace MaddsPet.Easteregg
         private const int TickIntervalMs = 16; // ~60fps
 
         private readonly Form overlay;
-        private readonly List<PictureBox> cats = new();
-        private readonly List<Point> velocities = new();
+        private readonly List<PointF> positions = new();
+        private readonly List<PointF> velocities = new();
+        private readonly List<int> catImageIndices = new();
+
         private readonly System.Windows.Forms.Timer moveTimer;
         private readonly System.Windows.Forms.Timer lifeTimer;
         private readonly Random rng = new();
 
         private static readonly Image[] CatImages =
         {
-            CleanEdges(Resources.blackcat),
-            CleanEdges(Resources.whitecat),
-            CleanEdges(Resources.graycat)
+            CleanEdgesFast(Resources.blackcat),
+            CleanEdgesFast(Resources.whitecat),
+            CleanEdgesFast(Resources.graycat)
         };
 
         public runningcats()
@@ -39,33 +40,31 @@ namespace MaddsPet.Easteregg
                 Bounds = Screen.PrimaryScreen.Bounds,
                 TopMost = true,
                 ShowInTaskbar = false,
-                BackColor = Color.Lime,
-                TransparencyKey = Color.Lime
+                BackColor = Color.Black,
+                TransparencyKey = Color.Black,
+               
             };
+            typeof(Form).GetProperty("DoubleBuffered",
+           System.Reflection.BindingFlags.NonPublic |
+          System.Reflection.BindingFlags.Instance)
+          ?.SetValue(overlay, true);
+            overlay.Paint += Overlay_Paint;
 
             for (int i = 0; i < CatCount; i++)
             {
-                PictureBox pb = new PictureBox
-                {
-                    Size = new Size(CatSize, CatSize),
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Image = CatImages[rng.Next(CatImages.Length)],
-                    Location = new Point(
-                        rng.Next(0, overlay.Width - CatSize),
-                        rng.Next(0, overlay.Height - CatSize)
-                    ),
-                    BackColor = Color.Transparent
-                };
+                positions.Add(new PointF(
+                    rng.Next(0, overlay.Width - CatSize),
+                    rng.Next(0, overlay.Height - CatSize)
+                ));
 
-                overlay.Controls.Add(pb);
-                cats.Add(pb);
+                catImageIndices.Add(rng.Next(CatImages.Length));
 
                 double angle = rng.NextDouble() * Math.PI * 2;
-                int speed = rng.Next(10, 19);
+                float speed = rng.Next(10, 19);
 
-                velocities.Add(new Point(
-                    (int)(Math.Cos(angle) * speed),
-                    (int)(Math.Sin(angle) * speed)
+                velocities.Add(new PointF(
+                    (float)(Math.Cos(angle) * speed),
+                    (float)(Math.Sin(angle) * speed)
                 ));
             }
 
@@ -85,28 +84,43 @@ namespace MaddsPet.Easteregg
 
         private void MoveTimer_Tick(object sender, EventArgs e)
         {
-            for (int i = 0; i < cats.Count; i++)
+            for (int i = 0; i < CatCount; i++)
             {
-                PictureBox cat = cats[i];
-                Point velocity = velocities[i];
+                PointF pos = positions[i];
+                PointF vel = velocities[i];
 
-                int newX = cat.Left + velocity.X;
-                int newY = cat.Top + velocity.Y;
+                float newX = pos.X + vel.X;
+                float newY = pos.Y + vel.Y;
 
-                if (newX <= 0 || newX >= overlay.Width - cat.Width)
+                if (newX <= 0 || newX >= overlay.Width - CatSize)
                 {
-                    velocity.X = -velocity.X;
-                    newX = Math.Clamp(newX, 0, overlay.Width - cat.Width);
+                    vel.X = -vel.X;
+                    newX = Math.Clamp(newX, 0, overlay.Width - CatSize);
                 }
 
-                if (newY <= 0 || newY >= overlay.Height - cat.Height)
+                if (newY <= 0 || newY >= overlay.Height - CatSize)
                 {
-                    velocity.Y = -velocity.Y;
-                    newY = Math.Clamp(newY, 0, overlay.Height - cat.Height);
+                    vel.Y = -vel.Y;
+                    newY = Math.Clamp(newY, 0, overlay.Height - CatSize);
                 }
 
-                velocities[i] = velocity;
-                cat.Location = new Point(newX, newY);
+                velocities[i] = vel;
+                positions[i] = new PointF(newX, newY);
+            }
+
+            overlay.Invalidate();
+        }
+
+        private void Overlay_Paint(object sender, PaintEventArgs e)
+        {
+            e.Graphics.CompositingQuality = System.Drawing.Drawing2D.CompositingQuality.HighSpeed;
+            e.Graphics.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Low;
+
+            for (int i = 0; i < CatCount; i++)
+            {
+                Image img = CatImages[catImageIndices[i]];
+                PointF pos = positions[i];
+                e.Graphics.DrawImage(img, pos.X, pos.Y, CatSize, CatSize);
             }
         }
 
@@ -118,33 +132,41 @@ namespace MaddsPet.Easteregg
             moveTimer.Dispose();
             lifeTimer.Dispose();
 
+            overlay.Paint -= Overlay_Paint;
             overlay.Close();
             overlay.Dispose();
         }
-        private static Image CleanEdges(Image source)
+        private static Image CleanEdgesFast(Image source)
         {
             Bitmap bmp = new Bitmap(source);
+            BitmapData data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
 
-            for (int y = 0; y < bmp.Height; y++)
+            int size = data.Stride * data.Height;
+            byte[] pixels = new byte[size];
+            System.Runtime.InteropServices.Marshal.Copy(data.Scan0, pixels, 0, size);
+
+            for (int i = 0; i < size; i += 4)
             {
-                for (int x = 0; x < bmp.Width; x++)
+                byte b = pixels[i];
+                byte g = pixels[i + 1];
+                byte r = pixels[i + 2];
+                byte a = pixels[i + 3];
+
+                bool looksLikePurpleFringe =
+                    a < 255 &&
+                    r > 80 &&
+                    b > 80 &&
+                    g < r - 20 &&
+                    g < b - 20;
+
+                if (looksLikePurpleFringe)
                 {
-                    Color px = bmp.GetPixel(x, y);
-
-                    bool looksLikePurpleFringe =
-                        px.A < 255 &&
-                        px.R > 80 &&
-                        px.B > 80 &&
-                        px.G < px.R - 20 &&
-                        px.G < px.B - 20;
-
-                    if (looksLikePurpleFringe)
-                    {
-                        bmp.SetPixel(x, y, Color.Transparent);
-                    }
+                    pixels[i + 3] = 0;
                 }
             }
 
+            System.Runtime.InteropServices.Marshal.Copy(pixels, 0, data.Scan0, size);
+            bmp.UnlockBits(data);
             return bmp;
         }
     }
